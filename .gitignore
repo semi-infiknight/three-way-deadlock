@@ -1,0 +1,10 @@
+.DS_Store
+target/
+**/*.so
+.env
+.env.*
+*.pem
+keypair.json
+**/keypair.json
+node_modules/
+.idea/
