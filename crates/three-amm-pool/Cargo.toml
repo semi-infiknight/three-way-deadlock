@@ -1,0 +1,7 @@
+[package]
+name = "three-amm-pool"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+three-amm-math = { path = "../three-amm-math" }

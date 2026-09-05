@@ -2,6 +2,7 @@
 members = [
     "crates/three-amm-math",
     "crates/three-amm-vault",
+    "crates/three-amm-pool",
 ]
 resolver = "2"
 
