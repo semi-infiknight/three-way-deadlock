@@ -1,0 +1,9 @@
+[package]
+name = "three-amm-router"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+three-amm-math = { path = "../three-amm-math" }
+three-amm-pool = { path = "../three-amm-pool" }
+three-amm-vault = { path = "../three-amm-vault" }
