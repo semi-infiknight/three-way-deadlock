@@ -1,6 +1,7 @@
 [workspace]
 members = [
     "crates/three-amm-math",
+    "crates/three-amm-vault",
 ]
 resolver = "2"
 
