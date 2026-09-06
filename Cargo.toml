@@ -5,6 +5,7 @@ members = [
     "crates/three-amm-pool",
     "crates/three-amm-router",
     "crates/consumer",
+    "programs/three_amm",
 ]
 resolver = "2"
 

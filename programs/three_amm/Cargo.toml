@@ -1,0 +1,19 @@
+[package]
+name = "three_amm"
+version = "0.1.0"
+description = "Equal-weight 3-asset AMM (x*y*z=k)"
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib", "lib"]
+name = "three_amm"
+
+[features]
+default = []
+idl-build = ["anchor-lang/idl-build", "anchor-spl/idl-build"]
+anchor-debug = []
+
+[dependencies]
+anchor-lang = "1.1.2"
+anchor-spl = "1.1.2"
+three-amm-math = { path = "../../crates/three-amm-math" }
