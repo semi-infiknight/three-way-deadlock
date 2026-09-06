@@ -1,0 +1,14 @@
+[package]
+name = "consumer"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "consumer"
+path = "src/main.rs"
+
+[dependencies]
+three-amm-math = { path = "../three-amm-math" }
+three-amm-pool = { path = "../three-amm-pool" }
+three-amm-router = { path = "../three-amm-router" }
+three-amm-vault = { path = "../three-amm-vault" }
