@@ -1,0 +1,20 @@
+[package]
+name = "three_amm_pio"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib", "lib"]
+name = "three_amm_pio"
+
+[features]
+default = []
+bpf-entrypoint = []
+
+[dependencies]
+pinocchio = { version = "0.11", features = ["cpi"] }
+pinocchio-system = "0.6"
+pinocchio-token = "0.7"
+solana-address = { version = "2", features = ["syscalls", "curve25519", "sha2"] }
+three-amm-math = { path = "../../crates/three-amm-math" }
+three-amm-pool = { path = "../../crates/three-amm-pool" }
