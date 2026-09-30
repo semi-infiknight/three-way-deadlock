@@ -4,8 +4,6 @@ True **3-asset** weighted AMM on Solana. One pool, three reserves, \(V=\prod R_i
 
 Any pair one hop. The untraded reserve **amount** does not change; implied prices still move.
 
-Not two 2-pools. Not Ethereum Balancer. Native SPL.
-
 ## On-chain (Pinocchio)
 
 - Program: [`8SMAn5rTDFCaLKAdNd1fXckxm1eHdZGDkZP7JqhLUpbP`](https://explorer.solana.com/address/8SMAn5rTDFCaLKAdNd1fXckxm1eHdZGDkZP7JqhLUpbP?cluster=devnet)
