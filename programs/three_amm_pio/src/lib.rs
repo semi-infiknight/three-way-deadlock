@@ -12,7 +12,7 @@ use pinocchio_token::{
     instructions::{Burn, InitializeAccount3, InitializeMint2, MintTo, Transfer},
     state::{Account as SplAccount, Mint},
 };
-use three_amm_math::{equal_weights, validate_weights};
+use three_amm_math::{equal_weights, validate_weights, DEFAULT_SOFTENING_STEPS};
 
 pub mod handlers;
 pub mod pool;
@@ -41,6 +41,8 @@ pub const VAULT_DISC: u8 = 2;
 pub const SWAP_COMPUTE_UNITS: u32 = 1_000_000;
 
 /// Packed: no implicit padding (a leading `u8` disc would otherwise shift `fee_bps`).
+/// Layout v2 adds virtual-balance softening fields after `lp_supply` — pre-v2 pools
+/// fail the `POOL_LEN` check and must be re-inited.
 #[repr(C, packed)]
 pub struct Pool {
     pub disc: u8,
@@ -65,6 +67,16 @@ pub struct Pool {
     pub reserve_b: u64,
     pub reserve_c: u64,
     pub lp_supply: u64,
+    /// Mooniswap-style virtual reserves (quote overlay; custody uses `reserve_*`).
+    pub virt_a: u64,
+    pub virt_b: u64,
+    pub virt_c: u64,
+    pub softening_steps_remaining: u32,
+    pub softening_steps_max: u32,
+    /// Last swap direction (`0xff` = none). Reverse quotes use `virt_*`.
+    pub last_token_in: u8,
+    pub last_token_out: u8,
+    pub _soft_pad: [u8; 6],
 }
 
 pub const POOL_LEN: usize = core::mem::size_of::<Pool>();
@@ -327,6 +339,14 @@ fn router_init(program_id: &Address, accounts: &mut [AccountView], data: &[u8]) 
         p.reserve_b = 0;
         p.reserve_c = 0;
         p.lp_supply = 0;
+        p.virt_a = 0;
+        p.virt_b = 0;
+        p.virt_c = 0;
+        p.softening_steps_remaining = 0;
+        p.softening_steps_max = DEFAULT_SOFTENING_STEPS;
+        p.last_token_in = pool::NO_LAST_TOKEN;
+        p.last_token_out = pool::NO_LAST_TOKEN;
+        p._soft_pad = [0; 6];
     }
     Ok(())
 }
@@ -540,6 +560,14 @@ mod bind_tests {
             reserve_b: 0,
             reserve_c: 0,
             lp_supply: 0,
+            virt_a: 0,
+            virt_b: 0,
+            virt_c: 0,
+            softening_steps_remaining: 0,
+            softening_steps_max: DEFAULT_SOFTENING_STEPS,
+            last_token_in: pool::NO_LAST_TOKEN,
+            last_token_out: pool::NO_LAST_TOKEN,
+            _soft_pad: [0; 6],
         }
     }
 
@@ -610,9 +638,13 @@ mod bind_tests {
 mod handler_tests {
     use super::*;
     use crate::handlers::{
-        encode_exit, encode_join, encode_swap, handle_exit, handle_join, handle_swap, VaultSession,
+        encode_exit, encode_join, encode_swap, encode_swap_vol, handle_exit, handle_join,
+        handle_swap, VaultSession,
     };
-    use three_amm_math::swap_out_given_in_weighted;
+    use three_amm_math::{
+        fee_bps_for_trade, fee_bps_for_volatility, quote_out_given_in_real,
+        quote_out_given_in_virtual, swap_out_given_in_weighted, VirtualBalanceState,
+    };
 
     fn pool_50_30_20() -> Pool {
         Pool {
@@ -638,6 +670,14 @@ mod handler_tests {
             reserve_b: 0,
             reserve_c: 0,
             lp_supply: 0,
+            virt_a: 0,
+            virt_b: 0,
+            virt_c: 0,
+            softening_steps_remaining: 0,
+            softening_steps_max: DEFAULT_SOFTENING_STEPS,
+            last_token_in: pool::NO_LAST_TOKEN,
+            last_token_out: pool::NO_LAST_TOKEN,
+            _soft_pad: [0; 6],
         }
     }
 
@@ -690,10 +730,11 @@ mod handler_tests {
         .unwrap();
         let b_before = [b.reserve_a, b.reserve_b, b.reserve_c];
         let b_lp = b.lp_supply;
+        // vol override 0 → base fee 30 (isolate bind/isolation from measured bump)
         let quote = swap_out_given_in_weighted(a.reserve_a, 5000, a.reserve_b, 3000, 10_000, 30)
             .unwrap();
         handle_swap(
-            &encode_swap(0, 1, 10_000, quote),
+            &encode_swap_vol(0, 1, 10_000, quote, 0),
             &mut a,
             &mut sa,
             [&va, &vb, &vc],
@@ -833,7 +874,7 @@ mod handler_tests {
     }
 
     #[test]
-    fn router_swap_50_30_20_matches_shipped_quote() {
+    fn router_swap_50_30_20_matches_shipped_quote_vol0() {
         let mut p = pool_50_30_20();
         let mut session = VaultSession::new();
         let mut bpt = 0u64;
@@ -854,19 +895,157 @@ mod handler_tests {
         let quote = swap_out_given_in_weighted(p.reserve_a, 5000, p.reserve_b, 3000, 10_000, 30)
             .unwrap();
         let out = handle_swap(
-            &encode_swap(0, 1, 10_000, quote),
+            &encode_swap_vol(0, 1, 10_000, quote, 0),
             &mut p,
             &mut session,
             [&va, &vb, &vc],
         )
         .unwrap();
         assert_eq!(out, quote);
+        assert_eq!(out, 9943);
         let ra = p.reserve_a;
         let rb = p.reserve_b;
         let rc = p.reserve_c;
         assert_eq!(rc, c_before);
         assert_eq!(ra, 5_000_000 + 10_000);
         assert_eq!(rb, 3_000_000 - out);
+        assert!(p.softening_steps_remaining > 0);
+    }
+
+    #[test]
+    fn measured_fee_path_matches_fee_bps_for_trade() {
+        let mut p = pool_50_30_20();
+        let mut session = VaultSession::new();
+        let mut bpt = 0u64;
+        let va = p.vault_a;
+        let vb = p.vault_b;
+        let vc = p.vault_c;
+        let lp = p.lp_mint;
+        handle_join(
+            &encode_join([5_000_000, 3_000_000, 2_000_000], 1),
+            &mut p,
+            &mut session,
+            [&va, &vb, &vc],
+            &lp,
+            &mut bpt,
+        )
+        .unwrap();
+        let amount_in = 100_000u64; // 2% of A → measurable bump
+        let fee = fee_bps_for_trade(30, p.reserve_a, amount_in).unwrap();
+        assert!(fee > 30);
+        let quote =
+            swap_out_given_in_weighted(p.reserve_a, 5000, p.reserve_b, 3000, amount_in, fee)
+                .unwrap();
+        let calm =
+            swap_out_given_in_weighted(p.reserve_a, 5000, p.reserve_b, 3000, amount_in, 30)
+                .unwrap();
+        assert!(quote <= calm);
+        let out = handle_swap(
+            &encode_swap(0, 1, amount_in, quote),
+            &mut p,
+            &mut session,
+            [&va, &vb, &vc],
+        )
+        .unwrap();
+        assert_eq!(out, quote);
+        let rc = p.reserve_c;
+        assert_eq!(rc, 2_000_000);
+    }
+
+    #[test]
+    fn vol_override_bumps_fee_vs_calm() {
+        let mut p = pool_50_30_20();
+        let mut session = VaultSession::new();
+        let mut bpt = 0u64;
+        let va = p.vault_a;
+        let vb = p.vault_b;
+        let vc = p.vault_c;
+        let lp = p.lp_mint;
+        handle_join(
+            &encode_join([5_000_000, 3_000_000, 2_000_000], 1),
+            &mut p,
+            &mut session,
+            [&va, &vb, &vc],
+            &lp,
+            &mut bpt,
+        )
+        .unwrap();
+        let amount_in = 10_000u64;
+        let calm_fee = fee_bps_for_volatility(30, 0).unwrap();
+        let stress_fee = fee_bps_for_volatility(30, 2_000).unwrap();
+        assert!(stress_fee > calm_fee);
+        let calm_out =
+            swap_out_given_in_weighted(p.reserve_a, 5000, p.reserve_b, 3000, amount_in, calm_fee)
+                .unwrap();
+        let stress_out =
+            swap_out_given_in_weighted(p.reserve_a, 5000, p.reserve_b, 3000, amount_in, stress_fee)
+                .unwrap();
+        assert!(stress_out <= calm_out);
+        let out = handle_swap(
+            &encode_swap_vol(0, 1, amount_in, stress_out, 2_000),
+            &mut p,
+            &mut session,
+            [&va, &vb, &vc],
+        )
+        .unwrap();
+        assert_eq!(out, stress_out);
+    }
+
+    #[test]
+    fn reverse_after_swap_uses_virtual_softening() {
+        let mut p = pool_50_30_20();
+        let mut session = VaultSession::new();
+        let mut bpt = 0u64;
+        let va = p.vault_a;
+        let vb = p.vault_b;
+        let vc = p.vault_c;
+        let lp = p.lp_mint;
+        handle_join(
+            &encode_join([5_000_000, 3_000_000, 2_000_000], 1),
+            &mut p,
+            &mut session,
+            [&va, &vb, &vc],
+            &lp,
+            &mut bpt,
+        )
+        .unwrap();
+        let pre = [p.reserve_a, p.reserve_b, p.reserve_c];
+        let out_ab = handle_swap(
+            &encode_swap_vol(0, 1, 10_000, 1, 0),
+            &mut p,
+            &mut session,
+            [&va, &vb, &vc],
+        )
+        .unwrap();
+        let rc = p.reserve_c;
+        assert_eq!(rc, pre[2]);
+        let steps = p.softening_steps_remaining;
+        assert!(steps > 0);
+        assert_eq!(p.last_token_in, 0);
+        assert_eq!(p.last_token_out, 1);
+
+        let state = VirtualBalanceState {
+            real: [p.reserve_a, p.reserve_b, p.reserve_c],
+            virt: [p.virt_a, p.virt_b, p.virt_c],
+            steps_remaining: steps,
+        };
+        let weights = [5000u16, 3000, 2000];
+        let virt_rev =
+            quote_out_given_in_virtual(&state, weights, 1, 0, out_ab, 30).unwrap();
+        let real_rev = quote_out_given_in_real(&state, weights, 1, 0, out_ab, 30).unwrap();
+        assert!(virt_rev < real_rev);
+
+        // On-chain reverse must match virtual quote (vol 0 → base fee).
+        let out_ba = handle_swap(
+            &encode_swap_vol(1, 0, out_ab, 1, 0),
+            &mut p,
+            &mut session,
+            [&va, &vb, &vc],
+        )
+        .unwrap();
+        assert_eq!(out_ba, virt_rev);
+        let rc2 = p.reserve_c;
+        assert_eq!(rc2, pre[2], "third reserve amount still unchanged");
     }
 
     #[test]

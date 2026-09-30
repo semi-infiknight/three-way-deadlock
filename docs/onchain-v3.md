@@ -19,5 +19,9 @@ Client talks only to Router tags. Compute-budget ix `SWAP_COMPUTE_UNITS = 1_000_
   - quote = actualOut = **9943**
   - C unchanged; `getTransaction` `err: null`; cu_limit 1_000_000
 
+## Layout v2 (vol fee + softening)
+
+Pool account grows after `lp_supply` with virtual reserves + softening metadata. Swap may carry optional `volatility_bps`. See [`release.md`](release.md). Pre-v2 pools are layout-incompatible (re-init).
+
 ## Deferred
-Three program ids + CPI, BatchRouter, N>3, gauges, Jupiter, mainnet. Pre-split pools are layout-incompatible.
+Three program ids + CPI, BatchRouter, N>3, gauges, Jupiter, mainnet. Pre-split / pre-v2 pools are layout-incompatible.

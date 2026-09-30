@@ -36,7 +36,11 @@ fn require_unlocked(session: &VaultSession) -> Result<(), ProgramError> {
     Ok(())
 }
 
-/// Swap exact-in. `data` is the **full** client payload: tag `3`, tin, tout, amount, min_out.
+/// Swap exact-in. Full payload: tag `3`, tin, tout, amount, min_out [, volatility_bps].
+///
+/// Fee: if `volatility_bps` present (27-byte ix), `fee_bps_for_volatility(base, vol)`;
+/// else measure from trade size via `fee_bps_for_trade`. Reverse of the last swap
+/// quotes against virtual balances; custody updates **real** reserves only.
 pub fn handle_swap(
     data: &[u8],
     pool: &mut Pool,
@@ -60,8 +64,19 @@ pub fn handle_swap(
     let token_out = rest[1] as usize;
     let amount_in = u64_at(rest, 2)?;
     let min_out = u64_at(rest, 10)?;
+    let vol_override = if rest.len() >= 26 {
+        Some(u64_at(rest, 18)?)
+    } else {
+        None
+    };
     session.unlock()?;
-    let (next, out) = pool::quote_swap_exact_in(pool, token_in, token_out, amount_in)?;
+    // Step prior softening window so reverse quotes converge over activity.
+    if pool.softening_steps_remaining > 0 && !pool::is_reverse_of_last(pool, token_in, token_out) {
+        pool::step_softening(pool);
+    }
+    let pre = [pool.reserve_a, pool.reserve_b, pool.reserve_c];
+    let (next, out, _fee) =
+        pool::quote_swap_exact_in(pool, token_in, token_out, amount_in, vol_override)?;
     if out < min_out {
         session.lock();
         return Err(ProgramError::Custom(2));
@@ -70,6 +85,7 @@ pub fn handle_swap(
     pool.reserve_a = next[0];
     pool.reserve_b = next[1];
     pool.reserve_c = next[2];
+    pool::seed_softening_after_swap(pool, pre, next, token_in, token_out);
     session.lock();
     Ok(out)
 }
@@ -189,6 +205,20 @@ pub fn encode_swap(token_in: u8, token_out: u8, amount_in: u64, min_out: u64) ->
     d[2] = token_out;
     d[3..11].copy_from_slice(&amount_in.to_le_bytes());
     d[11..19].copy_from_slice(&min_out.to_le_bytes());
+    d
+}
+
+/// Swap with explicit volatility override (measured path skipped).
+pub fn encode_swap_vol(
+    token_in: u8,
+    token_out: u8,
+    amount_in: u64,
+    min_out: u64,
+    volatility_bps: u64,
+) -> [u8; 27] {
+    let mut d = [0u8; 27];
+    d[..19].copy_from_slice(&encode_swap(token_in, token_out, amount_in, min_out));
+    d[19..27].copy_from_slice(&volatility_bps.to_le_bytes());
     d
 }
 

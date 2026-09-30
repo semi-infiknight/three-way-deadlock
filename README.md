@@ -27,22 +27,30 @@ Weights are portfolio basis points summing to `10_000` (min 1% each). Equal-weig
 
 Unlock → take/send → settle → lock is one Rust call stack (Solana has no EIP-1153). Bind checks reject a fake vault trio or fake LP mint before settle. Operating pool A leaves pool B reserves bitwise unchanged.
 
-### Fees
+### Fees (on-chain)
 
-Each pool stores a **base** `fee_bps` (fee on input). Quotes and swaps can raise the effective fee with an explicit volatility input via `fee_bps_for_volatility` — higher measured/explicit volatility yields a weakly higher fee; zero volatility returns the base fee unchanged.
+Each pool stores a **base** `fee_bps` (fee on input). The Pinocchio swap path **measures** stress from trade size vs the input reserve (`fee_bps_for_trade`) by default. Clients may append an explicit `volatility_bps` on the swap ix to override via `fee_bps_for_volatility`. Higher measured/explicit volatility → weakly higher fee; override `0` keeps the base fee.
 
-### Virtual-balance softening
+### Virtual-balance softening (on-chain)
 
-After an exact-in swap, optional Mooniswap-style **virtual balances** start at the pre-swap reserve vector and converge to post-swap real reserves over discrete steps. An immediate reverse quote against virtual balances is weakly worse for an arb than the raw post-swap quote; after full convergence the two match. Custody and settle always use **real** reserves; the untraded third reserve amount is unchanged on the real path.
+After an exact-in swap, the pool seeds Mooniswap-style **virtual balances** at the pre-swap reserve vector. The **reverse** of that swap quotes against virtual reserves for a few discrete steps, then converges toward real. Same-direction flow still quotes real. Custody always updates **real** reserves; the untraded third reserve amount is unchanged on the real path.
+
+## Release
+
+See **[`docs/release.md`](docs/release.md)** for the plain-language explainer: what AMM research this helps with (LVR / stress fees, reverse-path arb softening), who benefits, and how to talk about the upgrade. Short version:
+
+> True 3-asset weighted pool — any pair one hop. This release puts stress-sensitive fees and Mooniswap-style reverse softening on the settle path so LPs keep more value under size and immediate round-trips. The invariant is still constant-mean.
+
+**Pool layout v2** (virt + softening fields) is **breaking** for pre-upgrade pool accounts — re-init after program upgrade. Record new pools in `docs/upgrade.md` once deployed.
 
 ## On-chain (Pinocchio, devnet)
 
 - Program: [`8SMAn5rTDFCaLKAdNd1fXckxm1eHdZGDkZP7JqhLUpbP`](https://explorer.solana.com/address/8SMAn5rTDFCaLKAdNd1fXckxm1eHdZGDkZP7JqhLUpbP?cluster=devnet)
-- Instructions: `0` init · `1` join · `2` exit · `3` swap exact-in · `4` pause
+- Instructions: `0` init · `1` join · `2` exit · `3` swap exact-in (19-byte measured fee, or 27-byte + `volatility_bps`) · `4` pause
 - Vault PDA `["vault-state"]` is token / LP mint authority; the pool account quotes only
 - Weighted swaps need a ~1M CU compute-budget ix (path uses ~200k+)
 
-Stack choice (Pinocchio now; Anchor v1 as shape reference): see [`docs/stack.md`](docs/stack.md). Layout receipts: [`docs/onchain-v3.md`](docs/onchain-v3.md), [`docs/upgrade.md`](docs/upgrade.md).
+Stack choice (Pinocchio now; Anchor v1 as shape reference): see [`docs/stack.md`](docs/stack.md). Layout receipts: [`docs/onchain-v3.md`](docs/onchain-v3.md), [`docs/upgrade.md`](docs/upgrade.md). Release narrative: [`docs/release.md`](docs/release.md).
 
 ## Build and test
 
@@ -50,6 +58,7 @@ Stack choice (Pinocchio now; Anchor v1 as shape reference): see [`docs/stack.md`
 cargo test -p three-amm-math
 cargo test -p three-amm-vault
 cargo test -p three-amm-router
+cargo test -p three_amm_pio --lib
 cargo build-sbf --manifest-path programs/three_amm_pio/Cargo.toml
 ```
 
@@ -105,16 +114,17 @@ This protocol does **not** use an oracle as the primary pricing mechanism (unlik
 - **Not audited.** Do not deposit mainnet funds you cannot lose.
 - Upgrade authority is a single keypair on the current BPF-upgradeable program; treat that as trusted admin risk.
 - Core math lives in `three-amm-math` and is shared with the Pinocchio program so quotes cannot silently diverge from settle.
-- Active development: some surfaces (vol fee, virtual softening) are crate-complete first; on-chain ix wiring may lag until a program upgrade. Proceed with caution.
+- Active development / not audited. Vol fee + virtual softening are wired into `three_amm_pio` handlers; a BPF upgrade + new pools are still required before devnet matches this tree. Proceed with caution.
 - Deferred (not this repo’s near goal): three program-id CPI split, Token-2022, Jupiter listing process, mainnet, gauges, N>3, unbalanced join/exit, TWAMM, factory UX.
 
 ## Docs
 
 | Doc | Topic |
 |-----|--------|
+| [`docs/release.md`](docs/release.md) | **Release explainer** — research → LP value |
 | [`docs/balancer-on-solana.md`](docs/balancer-on-solana.md) | Paper math on SPL vaults |
 | [`docs/v3-stack.md`](docs/v3-stack.md) | Router / Vault / Pool mapping |
 | [`docs/onchain-v3.md`](docs/onchain-v3.md) | One-ELF layout + devnet ids |
-| [`docs/upgrade.md`](docs/upgrade.md) | Weighted upgrade receipts |
+| [`docs/upgrade.md`](docs/upgrade.md) | Deploy / upgrade receipts |
 | [`docs/stack.md`](docs/stack.md) | Pinocchio vs Anchor / Quasar |
 | [`docs/memepairs.md`](docs/memepairs.md) | Adjacent product research (not this AMM) |

@@ -1,5 +1,13 @@
 # Weighted 3-asset AMM upgrade (public Solana devnet)
 
+## Pending: layout v2 (vol fee + virtual softening)
+
+Code in this repo extends `Pool` with `virt_*`, softening step counters, and last-swap direction. Swap ix: **19 bytes** → measured fee; **27 bytes** → optional `volatility_bps` override. Reverse of last swap quotes on virtual reserves.
+
+- **Status:** implemented + unit-tested in `three_amm_pio`; **not yet** recorded as a new BPF upgrade slot below.
+- **Action after `cargo build-sbf` + `solana program deploy/upgrade`:** re-init pools (old `POOL_LEN` fails), run a vol-0 A→B (expect out **9943** on 5M/3M/2M @ 30 bps), then a reverse and confirm out ≤ real-reserve reverse quote; append slot + pool ids here.
+- Narrative for sharing: [`docs/release.md`](release.md).
+
 ## Cluster
 - RPC: `https://api.devnet.solana.com`
 - Not mainnet-beta. Not localhost.
