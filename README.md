@@ -1,5 +1,9 @@
 # three-way-deadlock
 
+<p align="center">
+  <img src="docs/hero.png" alt="three-way-deadlock — three-asset weighted AMM" width="800" />
+</p>
+
 True **3-asset** weighted AMM on Solana. One pool, three SPL reserves, constant-mean invariant
 
 \[
