@@ -12,12 +12,13 @@ One Pinocchio program `8SMAn5rTDFCaLKAdNd1fXckxm1eHdZGDkZP7JqhLUpbP` (not three 
 Client talks only to Router tags. Compute-budget ix `SWAP_COMPUTE_UNITS = 1_000_000` (> 200k) is prepended on every Router tx.
 
 ## Devnet (public `api.devnet.solana.com`)
-- Upgrade slot **494949810** (same program id)
+- Upgrade slot **505925428** (layout v2 — vol fee + softening; same program id)
 - Vault state: `22MGcjwTaKHbnhM8vn2z66w8qQbgWHVSxkYd2rAYURau`
-- New pool 50/30/20: `E49rz2ZdBqcpdbqcw4Pz5ptrtEQhF2BdwTMTHoXTWCeR`
-- Swap A→B `2pPmtpnBEuKTP5NsaGNy7xaqd4yvvFG5osuajJq8b6jXuQqpsC9Gs368yam6csom6K9CRJhA74rpNCsSvccsDWbW`
-  - quote = actualOut = **9943**
-  - C unchanged; `getTransaction` `err: null`; cu_limit 1_000_000
+- v2 pool 50/30/20: `3iwdZpU3N7fQLZ4mLQvk6BnB7EsrkVLhtQam2iEcv76m`
+- Swap A→B `3v9bkBjQCpyJhoAR9XibsKLkRt8gGsEj3i4imXRnTcVAQSo7H6Y7ZNdmoDGWgiq5GiyNHmkVpFKkgWVcmZjQMcZF`
+  - quote = actualOut = **9943** (vol override 0)
+  - C unchanged; `getTransaction` `err: null`; cu_limit 1_000_000; cu ~68k
+- Full receipts: [`upgrade.md`](upgrade.md)
 
 ## Layout v2 (vol fee + softening)
 

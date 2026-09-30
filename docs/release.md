@@ -57,4 +57,9 @@ cargo run -p consumer -- quote 5000000 5000 3000000 3000 10000 30
 # → 9943  (base / vol-0 path)
 ```
 
-Deploy requires a working `cargo build-sbf` toolchain and a program upgrade (same program id). Record slot + new pool addresses in `docs/upgrade.md` after deploy.
+### Live (devnet)
+- Program slot: **`505925428`** (id `8SMAn5rTDFCaLKAdNd1fXckxm1eHdZGDkZP7JqhLUpbP`)
+- Pool: `3iwdZpU3N7fQLZ4mLQvk6BnB7EsrkVLhtQam2iEcv76m` — A→B out **9943** (vol override 0)
+- Full receipts: [`upgrade.md`](upgrade.md)
+
+Build note: use Agave `cargo-build-sbf` ≥ 3.1 with platform-tools **v1.52** (rustc 1.89), and keep `zeroize = "=1.8.1"` pinned for older SBF cargos.

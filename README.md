@@ -41,7 +41,7 @@ See **[`docs/release.md`](docs/release.md)** for the plain-language explainer: w
 
 > True 3-asset weighted pool — any pair one hop. This release puts stress-sensitive fees and Mooniswap-style reverse softening on the settle path so LPs keep more value under size and immediate round-trips. The invariant is still constant-mean.
 
-**Pool layout v2** (virt + softening fields) is **breaking** for pre-upgrade pool accounts — re-init after program upgrade. Record new pools in `docs/upgrade.md` once deployed.
+**Pool layout v2** is live on devnet (program slot **`505925428`**). Pre-v2 pools are layout-incompatible — use the pool in [`docs/upgrade.md`](docs/upgrade.md) (`3iwdZpU3N7fQLZ4mLQvk6BnB7EsrkVLhtQam2iEcv76m`).
 
 ## On-chain (Pinocchio, devnet)
 
@@ -114,7 +114,7 @@ This protocol does **not** use an oracle as the primary pricing mechanism (unlik
 - **Not audited.** Do not deposit mainnet funds you cannot lose.
 - Upgrade authority is a single keypair on the current BPF-upgradeable program; treat that as trusted admin risk.
 - Core math lives in `three-amm-math` and is shared with the Pinocchio program so quotes cannot silently diverge from settle.
-- Active development / not audited. Vol fee + virtual softening are wired into `three_amm_pio` handlers; a BPF upgrade + new pools are still required before devnet matches this tree. Proceed with caution.
+- Active development / not audited. Vol fee + virtual softening are on the live Pinocchio program (devnet slot `505925428`). Proceed with caution.
 - Deferred (not this repo’s near goal): three program-id CPI split, Token-2022, Jupiter listing process, mainnet, gauges, N>3, unbalanced join/exit, TWAMM, factory UX.
 
 ## Docs

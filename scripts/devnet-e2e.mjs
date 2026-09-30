@@ -294,9 +294,11 @@ async function main() {
     throw last;
   }
 
-  async function doSwap(label, tokenIn, tokenOut) {
+  async function doSwap(label, tokenIn, tokenOut, { volOverride = 0n } = {}) {
     const { va, vb, vc } = await readVaults();
     const amounts = [va.amount, vb.amount, vc.amount];
+    // volOverride 0 → base fee path (matches classic 9943 receipt). Omit override
+    // only when intentionally testing measured fees.
     const quote = swapOutGivenInWeighted(
       amounts[tokenIn],
       WEIGHTS[tokenIn],
@@ -310,6 +312,7 @@ async function main() {
       Buffer.from([3, tokenIn, tokenOut]),
       u64le(amountIn),
       u64le(quote),
+      u64le(volOverride), // 27-byte ix: explicit volatility_bps override
     ]);
     const swapKeys = [
       { pubkey: payer.publicKey, isSigner: true, isWritable: false },
