@@ -131,4 +131,3 @@ This protocol does **not** use an oracle as the primary pricing mechanism (unlik
 | [`docs/onchain-v3.md`](docs/onchain-v3.md) | One-ELF layout + devnet ids |
 | [`docs/upgrade.md`](docs/upgrade.md) | Deploy / upgrade receipts |
 | [`docs/stack.md`](docs/stack.md) | Pinocchio vs Anchor / Quasar |
-| [`docs/memepairs.md`](docs/memepairs.md) | Adjacent product research (not this AMM) |
