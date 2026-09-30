@@ -1,6 +1,12 @@
 //! Router: the only user-facing entry. Vault unlock → Pool quote → Vault settle.
 //! Analogous to Balancer V3 Router (not BatchRouter / BufferRouter).
 
+use std::collections::BTreeMap;
+
+use three_amm_math::{
+    converge_virtual_balances, quote_out_given_in_real, quote_out_given_in_virtual,
+    seed_virtual_after_swap, step_virtual_balances, VirtualBalanceState, DEFAULT_SOFTENING_STEPS,
+};
 use three_amm_pool::WeightedPool;
 use three_amm_vault::{AccountId, MintId, PoolId, UserId, Vault, VaultError};
 
@@ -17,6 +23,35 @@ pub enum RouterError {
 impl From<VaultError> for RouterError {
     fn from(e: VaultError) -> Self {
         RouterError::Vault(e)
+    }
+}
+
+/// Per-pool Mooniswap-style virtual balances. Custody stays on Vault `real` reserves.
+#[derive(Clone, Debug, Default)]
+pub struct SofteningBook {
+    states: BTreeMap<PoolId, VirtualBalanceState>,
+}
+
+impl SofteningBook {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn get(&self, pool_id: PoolId) -> Option<&VirtualBalanceState> {
+        self.states.get(&pool_id)
+    }
+
+    pub fn step(&mut self, pool_id: PoolId) {
+        if let Some(s) = self.states.get_mut(&pool_id) {
+            step_virtual_balances(s);
+        }
+    }
+
+    pub fn converge(&mut self, pool_id: PoolId) {
+        if let Some(s) = self.states.get_mut(&pool_id) {
+            let n = s.steps_remaining.saturating_add(1);
+            converge_virtual_balances(s, n);
+        }
     }
 }
 
@@ -38,6 +73,23 @@ impl Router {
         Ok(pool)
     }
 
+    /// Aggregator-facing exact-in quote (no custody). Uses volatility-aware fee.
+    /// Returns the same out amount the softened/vol swap path would settle at
+    /// `volatility_bps` against current vault reserves (real balances).
+    pub fn quote_exact_in(
+        vault: &Vault,
+        pool_id: PoolId,
+        pool: &WeightedPool,
+        token_in: usize,
+        token_out: usize,
+        amount_in: u64,
+        volatility_bps: u64,
+    ) -> Result<u64, RouterError> {
+        let reserves = vault.reserves(pool_id)?;
+        pool.quote_exact_in_for_aggregator(reserves, token_in, token_out, amount_in, volatility_bps)
+            .ok_or(RouterError::Quote)
+    }
+
     pub fn swap_exact_in(
         vault: &mut Vault,
         pool_id: PoolId,
@@ -48,6 +100,38 @@ impl Router {
         token_out: usize,
         amount_in: u64,
         min_out: u64,
+    ) -> Result<u64, RouterError> {
+        Self::swap_exact_in_vol(
+            vault,
+            pool_id,
+            pool,
+            user,
+            presented_vaults,
+            token_in,
+            token_out,
+            amount_in,
+            min_out,
+            0,
+            None,
+            DEFAULT_SOFTENING_STEPS,
+        )
+    }
+
+    /// Exact-in swap with volatility-aware fee and optional virtual-balance seeding.
+    /// Vault bind → unlock → pool quote → take/send → settle(**real**) → lock.
+    pub fn swap_exact_in_vol(
+        vault: &mut Vault,
+        pool_id: PoolId,
+        pool: &WeightedPool,
+        user: UserId,
+        presented_vaults: [AccountId; 3],
+        token_in: usize,
+        token_out: usize,
+        amount_in: u64,
+        min_out: u64,
+        volatility_bps: u64,
+        softening: Option<&mut SofteningBook>,
+        softening_steps: u32,
     ) -> Result<u64, RouterError> {
         if !vault.vaults_match_pool(
             pool_id,
@@ -62,7 +146,7 @@ impl Router {
         let reserves = rec.reserves;
         vault.unlock()?;
         let (next, out) = pool
-            .quote_swap_exact_in(reserves, token_in, token_out, amount_in)
+            .quote_swap_exact_in_vol(reserves, token_in, token_out, amount_in, volatility_bps)
             .ok_or(RouterError::Quote)?;
         if out < min_out {
             vault.lock();
@@ -73,7 +157,50 @@ impl Router {
         vault.send(user, mints[token_out], out)?;
         vault.settle(pool_id, next, supply)?;
         vault.lock();
+        if let Some(book) = softening {
+            book.states
+                .insert(pool_id, seed_virtual_after_swap(reserves, next, softening_steps));
+        }
         Ok(out)
+    }
+
+    /// Reverse-direction quote using virtual balances when present (arb softening).
+    /// Falls back to real vault reserves when the book has no state for `pool_id`.
+    pub fn quote_reverse(
+        vault: &Vault,
+        pool_id: PoolId,
+        pool: &WeightedPool,
+        book: &SofteningBook,
+        token_in: usize,
+        token_out: usize,
+        amount_in: u64,
+        fee_bps: u64,
+    ) -> Result<u64, RouterError> {
+        if let Some(state) = book.get(pool_id) {
+            quote_out_given_in_virtual(state, pool.weights, token_in, token_out, amount_in, fee_bps)
+                .ok_or(RouterError::Quote)
+        } else {
+            let r = vault.reserves(pool_id)?;
+            let state = VirtualBalanceState::from_real(r);
+            quote_out_given_in_real(&state, pool.weights, token_in, token_out, amount_in, fee_bps)
+                .ok_or(RouterError::Quote)
+        }
+    }
+
+    /// Real-reserve reverse quote (no virtual overlay) — for arb comparison tests.
+    pub fn quote_reverse_real(
+        vault: &Vault,
+        pool_id: PoolId,
+        pool: &WeightedPool,
+        token_in: usize,
+        token_out: usize,
+        amount_in: u64,
+        fee_bps: u64,
+    ) -> Result<u64, RouterError> {
+        let r = vault.reserves(pool_id)?;
+        let state = VirtualBalanceState::from_real(r);
+        quote_out_given_in_real(&state, pool.weights, token_in, token_out, amount_in, fee_bps)
+            .ok_or(RouterError::Quote)
     }
 
     pub fn add_liquidity_proportional(

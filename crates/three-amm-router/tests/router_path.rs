@@ -1,9 +1,10 @@
 //! Drive init / swap exact-in / proportional join / exit through the Router.
 
 use three_amm_math::{
-    proportional_add, proportional_remove, swap_out_given_in, swap_out_given_in_weighted,
+    fee_bps_for_volatility, proportional_add, proportional_remove, swap_out_given_in,
+    swap_out_given_in_weighted, DEFAULT_SOFTENING_STEPS,
 };
-use three_amm_router::{Router, RouterError};
+use three_amm_router::{Router, RouterError, SofteningBook};
 use three_amm_vault::{AccountId, PoolId, UserId, Vault};
 
 fn id(n: u8) -> [u8; 32] {
@@ -310,6 +311,102 @@ fn zero_bpt_user_cannot_remove() {
     assert_eq!(err, RouterError::Vault(three_amm_vault::VaultError::InsufficientUser));
     assert_eq!(f.vault.reserves(f.pool_id).unwrap(), reserves_before);
     assert_eq!(f.vault.user_balance(f.user, f.lp), f.vault.lp_supply(f.pool_id).unwrap());
+}
+
+#[test]
+fn vol_aware_swap_through_router_matches_aggregator_quote() {
+    let mut f = setup([5000, 3000, 2000], 30);
+    Router::add_liquidity_proportional(
+        &mut f.vault,
+        f.pool_id,
+        &f.pool,
+        f.user,
+        f.vault_acc,
+        f.lp,
+        [5_000_000, 3_000_000, 2_000_000],
+        1,
+    )
+    .unwrap();
+    let amount_in = 10_000u64;
+    let vol = 500u64;
+    let quote = Router::quote_exact_in(
+        &f.vault, f.pool_id, &f.pool, 0, 1, amount_in, vol,
+    )
+    .unwrap();
+    let fee = fee_bps_for_volatility(30, vol).unwrap();
+    let r = f.vault.reserves(f.pool_id).unwrap();
+    let math = swap_out_given_in_weighted(r[0], 5000, r[1], 3000, amount_in, fee).unwrap();
+    assert_eq!(quote, math);
+
+    let out = Router::swap_exact_in_vol(
+        &mut f.vault,
+        f.pool_id,
+        &f.pool,
+        f.user,
+        f.vault_acc,
+        0,
+        1,
+        amount_in,
+        quote,
+        vol,
+        None,
+        0,
+    )
+    .unwrap();
+    assert_eq!(out, quote);
+    assert_eq!(f.vault.reserves(f.pool_id).unwrap()[2], r[2]);
+}
+
+#[test]
+fn virtual_softening_worsens_reverse_then_converges_via_router() {
+    let mut f = setup([5000, 3000, 2000], 30);
+    Router::add_liquidity_proportional(
+        &mut f.vault,
+        f.pool_id,
+        &f.pool,
+        f.user,
+        f.vault_acc,
+        f.lp,
+        [5_000_000, 3_000_000, 2_000_000],
+        1,
+    )
+    .unwrap();
+    let mut book = SofteningBook::new();
+    let amount_in = 10_000u64;
+    let out = Router::swap_exact_in_vol(
+        &mut f.vault,
+        f.pool_id,
+        &f.pool,
+        f.user,
+        f.vault_acc,
+        0,
+        1,
+        amount_in,
+        1,
+        0,
+        Some(&mut book),
+        DEFAULT_SOFTENING_STEPS,
+    )
+    .unwrap();
+    assert_eq!(f.vault.reserves(f.pool_id).unwrap()[2], 2_000_000);
+
+    let virt_rev = Router::quote_reverse(
+        &f.vault, f.pool_id, &f.pool, &book, 1, 0, out, 30,
+    )
+    .unwrap();
+    let real_rev = Router::quote_reverse_real(
+        &f.vault, f.pool_id, &f.pool, 1, 0, out, 30,
+    )
+    .unwrap();
+    assert!(virt_rev <= real_rev);
+    assert!(virt_rev < real_rev);
+
+    book.converge(f.pool_id);
+    let virt_after = Router::quote_reverse(
+        &f.vault, f.pool_id, &f.pool, &book, 1, 0, out, 30,
+    )
+    .unwrap();
+    assert_eq!(virt_after, real_rev);
 }
 
 #[test]

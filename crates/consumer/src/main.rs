@@ -1,8 +1,8 @@
 //! Fresh consumer of the shipped Router / Vault / Pool stack (not crate unit tests).
 use std::env;
 use three_amm_math::{
-    apply_swap, apply_swap_weighted, invariant, invariant_ge, proportional_add, swap_out_given_in,
-    swap_out_given_in_weighted,
+    apply_swap, apply_swap_weighted, fee_bps_for_volatility, invariant, invariant_ge,
+    proportional_add, swap_out_given_in, swap_out_given_in_weighted,
 };
 use three_amm_router::Router;
 use three_amm_vault::Vault;
@@ -10,13 +10,21 @@ use three_amm_vault::Vault;
 fn main() {
     let args: Vec<String> = env::args().collect();
     if args.get(1).map(|s| s.as_str()) == Some("quote") {
-        // quote <rin> <win> <rout> <wout> <amount_in> <fee_bps>
+        // quote <rin> <win> <rout> <wout> <amount_in> <fee_bps> [volatility_bps]
+        // When volatility_bps is present, fee = fee_bps_for_volatility(fee_bps, vol).
+        // Output is a single u64 line — aggregator-ready exact-in out amount.
         let rin: u64 = args[2].parse().expect("rin");
         let win: u16 = args[3].parse().expect("win");
         let rout: u64 = args[4].parse().expect("rout");
         let wout: u16 = args[5].parse().expect("wout");
         let amount_in: u64 = args[6].parse().expect("amount_in");
-        let fee_bps: u64 = args[7].parse().expect("fee_bps");
+        let base_fee: u64 = args[7].parse().expect("fee_bps");
+        let fee_bps = if let Some(v) = args.get(8) {
+            let vol: u64 = v.parse().expect("volatility_bps");
+            fee_bps_for_volatility(base_fee, vol).expect("vol fee")
+        } else {
+            base_fee
+        };
         let q = swap_out_given_in_weighted(rin, win, rout, wout, amount_in, fee_bps)
             .expect("weighted quote");
         println!("{q}");

@@ -5,9 +5,19 @@
 //! Any pair swap is one-hop. The untouched reserve stays in the product
 //! (its *amount* is unchanged; implied prices vs the third asset still move).
 
+pub mod fee;
 pub mod pow;
+pub mod softening;
 pub mod weighted;
 
+pub use fee::{
+    fee_bps_for_trade, fee_bps_for_volatility, measured_volatility_bps, MAX_VOL_FEE_BUMP_BPS,
+    VOL_FEE_SCALE,
+};
+pub use softening::{
+    converge_virtual_balances, quote_out_given_in_real, quote_out_given_in_virtual,
+    seed_virtual_after_swap, step_virtual_balances, VirtualBalanceState, DEFAULT_SOFTENING_STEPS,
+};
 pub use weighted::{
     apply_swap_weighted, equal_weights, ln_invariant, ln_invariant_ge, swap_out_given_in_weighted,
     validate_weights, weighted_spot_e9, MIN_WEIGHT, WEIGHT_DENOM,
